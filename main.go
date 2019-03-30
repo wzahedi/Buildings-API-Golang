@@ -12,7 +12,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 )
 
@@ -21,13 +20,11 @@ import (
 // ConstructYr: Year of construction completion
 // Height: Height of building measured from ground to roof
 // Area: Area of building polygon
-// Type: Type of building represented by feature code
 type Building struct {
-	ID          string `json:"bin" bson:"id"`
-	ConstructYr string `json:"cnstrct_yr" bson:"construct_yr"`
-	Height      string `json:"heightroof" bson:"height"`
-	Area        string `json:"shape_area" bson:"area"`
-	Type        string `json:"feat_code" bson:"type"`
+	ID          int64   `json:"bin,string"`
+	ConstructYr int16   `json:"cnstrct_yr,string"`
+	Height      float64 `json:"heightroof,string"`
+	Area        float64 `json:"shape_area,string"`
 }
 
 func main() {
@@ -41,9 +38,9 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("Connected to MongoDB.")
-	collection := client.Database("ToposBuildings").Collection("buildings")
+	collection := client.Database("WahhajTopos").Collection("buildings")
 
-	// If detected no documents already exist, then run ETL
+	// If detect no documents already exist, then do ETL
 	count, err := collection.EstimatedDocumentCount(context.TODO())
 	if err != nil {
 		fmt.Printf("Count error: %s\n", err)
@@ -76,6 +73,7 @@ func main() {
 	http.HandleFunc("/byyear", GetByConstructYr(collection))
 	http.HandleFunc("/groupyear", GroupByYear(collection))
 	http.HandleFunc("/data", CalculateData(collection))
+	fmt.Println("HTTP Server running on port 80.")
 	http.ListenAndServe(":80", nil)
 }
 
@@ -84,9 +82,9 @@ func GetHome(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Wahhaj Zahedi\nTopos Backend Engineering Assignment")
 }
 
-//GetBuildings ... Get list of buildings
+//GetBuildings ... Get list of all buildings
 func GetBuildings(c *mongo.Collection) http.HandlerFunc {
-	var items []Building
+	items := bson.A{}
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		cur, err := c.Find(context.TODO(), bson.M{})
 		if err != nil {
@@ -98,7 +96,9 @@ func GetBuildings(c *mongo.Collection) http.HandlerFunc {
 			if err != nil {
 				log.Fatal(err)
 			}
-			items = append(items, elem)
+
+			building := bson.M{"id": elem.ID, "constructyr": elem.ConstructYr, "height": elem.Height, "area": elem.Area}
+			items = append(items, building)
 		}
 		if err := cur.Err(); err != nil {
 			log.Fatal(err)
@@ -109,26 +109,29 @@ func GetBuildings(c *mongo.Collection) http.HandlerFunc {
 	return http.HandlerFunc(fn)
 }
 
-//GetBuildingByID ... Get a building by its ID (BIN)
+//GetBuildingByID ... Get a building by its ID (BIN) param
 func GetBuildingByID(c *mongo.Collection) http.HandlerFunc {
 	var result Building
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		err := c.FindOne(context.TODO(), bson.M{"id": id}).Decode(&result)
-		if err != nil {
+		idStr := r.URL.Query().Get("id")
+		id, err := strconv.ParseFloat(idStr, 64)
+		error := c.FindOne(context.TODO(), bson.M{"id": id}).Decode(&result)
+		if error != nil {
 			log.Fatal(err)
 		}
-		json.NewEncoder(w).Encode(result)
+		building := bson.M{"id": result.ID, "constructyr": result.ConstructYr, "height": result.Height, "area": result.Area}
+		json.NewEncoder(w).Encode(building)
 	}
 	return http.HandlerFunc(fn)
 }
 
-//GetByConstructYr ... Get list of buildings by year
+//GetByConstructYr ... Get list of buildings by year param
 func GetByConstructYr(c *mongo.Collection) http.HandlerFunc {
-	var results []*Building
+	items := bson.A{}
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		yr := r.URL.Query().Get("year")
-		cur, err := c.Find(context.TODO(), bson.M{"construct_yr": yr})
+		yrStr := r.URL.Query().Get("year")
+		yr, err := strconv.ParseFloat(yrStr, 32)
+		cur, err := c.Find(context.TODO(), bson.M{"constructyr": yr})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -138,29 +141,31 @@ func GetByConstructYr(c *mongo.Collection) http.HandlerFunc {
 			if err != nil {
 				log.Fatal(err)
 			}
-			results = append(results, &elem)
+			building := bson.M{"id": elem.ID, "constructyr": elem.ConstructYr, "height": elem.Height, "area": elem.Area}
+			items = append(items, building)
 		}
 		if err := cur.Err(); err != nil {
 			log.Fatal(err)
 		}
 		cur.Close(context.TODO())
-		json.NewEncoder(w).Encode(results)
+		json.NewEncoder(w).Encode(items)
 	}
 	return http.HandlerFunc(fn)
 }
 
 //GetLessThanHeight ... Get all buildings smaller than a certain height, sorted by decreasing height
 func GetLessThanHeight(c *mongo.Collection) http.HandlerFunc {
-	var results []*Building
+	response := bson.A{}
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		heightStr := r.URL.Query().Get("height")
 		height, err := strconv.ParseFloat(heightStr, 64)
+		group := []bson.M{{"$match": bson.M{"height": bson.M{"$lt": height}}}, {"$sort": bson.M{"height": -1}}}
+		cur, err := c.Aggregate(
+			context.TODO(),
+			group,
+		)
 		if err != nil {
 			fmt.Println(err)
-		}
-		cur, err := c.Find(context.TODO(), bson.M{})
-		if err != nil {
-			log.Fatal(err)
 		}
 		for cur.Next(context.TODO()) {
 			var elem Building
@@ -168,35 +173,17 @@ func GetLessThanHeight(c *mongo.Collection) http.HandlerFunc {
 			if err != nil {
 				log.Fatal(err)
 			}
-			itemHeight, err := strconv.ParseFloat(elem.Height, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			if itemHeight <= height {
-				results = append(results, &elem)
-			}
-		}
-		if err := cur.Err(); err != nil {
-			log.Fatal(err)
+			building := bson.M{"id": elem.ID, "constructyr": elem.ConstructYr, "height": elem.Height, "area": elem.Area}
+			response = append(response, building)
 		}
 		cur.Close(context.TODO())
-		sort.Slice(results, func(i, j int) bool {
-			h1, err := strconv.ParseFloat(results[i].Height, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			h2, err := strconv.ParseFloat(results[j].Height, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			return h1 > h2
-		})
-		json.NewEncoder(w).Encode(results)
+		json.NewEncoder(w).Encode(response)
+		response = nil
 	}
 	return http.HandlerFunc(fn)
 }
 
-//CalculateData ... Returns a few selected calculations
+//CalculateData ... Caculate total area, average height, and building count
 func CalculateData(c *mongo.Collection) http.HandlerFunc {
 	fn := func(w http.ResponseWriter, r *http.Request) {
 		var sum float64
@@ -212,16 +199,8 @@ func CalculateData(c *mongo.Collection) http.HandlerFunc {
 			if err != nil {
 				log.Fatal(err)
 			}
-			area, err := strconv.ParseFloat(elem.Area, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			height, err := strconv.ParseFloat(elem.Height, 64)
-			if err != nil {
-				fmt.Println(err)
-			}
-			sum += area
-			heightSum += height
+			sum += elem.Area
+			heightSum += elem.Height
 			count++
 		}
 		avgHeight := heightSum / float64(count)
@@ -234,16 +213,16 @@ func CalculateData(c *mongo.Collection) http.HandlerFunc {
 	return http.HandlerFunc(fn)
 }
 
-//GroupByYear ... Aggregate building ID's by year and also return count
+//GroupByYear ... Aggregate and count building ID's by year
 func GroupByYear(c *mongo.Collection) http.HandlerFunc {
 	response := bson.A{}
 	fn := func(w http.ResponseWriter, r *http.Request) {
-		years, err := c.Distinct(context.TODO(), "construct_yr", bson.D{})
+		years, err := c.Distinct(context.TODO(), "constructyr", bson.D{})
 		if err != nil {
 			fmt.Println(err)
 		}
 		for _, year := range years {
-			group := []bson.M{{"$match": bson.M{"construct_yr": year}}}
+			group := []bson.M{{"$match": bson.M{"constructyr": year}}}
 			cur, err := c.Aggregate(
 				context.TODO(),
 				group,
@@ -251,7 +230,7 @@ func GroupByYear(c *mongo.Collection) http.HandlerFunc {
 			if err != nil {
 				fmt.Println(err)
 			}
-			var items []string
+			var items []int64
 			for cur.Next(context.TODO()) {
 				var elem Building
 				err := cur.Decode(&elem)
@@ -261,7 +240,7 @@ func GroupByYear(c *mongo.Collection) http.HandlerFunc {
 				items = append(items, elem.ID)
 			}
 			cur.Close(context.TODO())
-			response = append(response, bson.M{"construct_yr": year, "count": len(items), "buildings": items})
+			response = append(response, bson.M{"constructyr": year, "count": len(items), "buildings": items})
 		}
 		json.NewEncoder(w).Encode(response)
 		response = nil

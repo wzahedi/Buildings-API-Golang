@@ -19,6 +19,7 @@ API Documentation:
       - Example: http://localhost/smallerthan?height=50 <br />
     * Get list of buildings by year: http://localhost/byyear?year= <br />
       - Example: http://localhost/byyear?year=1992 <br />
-    * Calculate the total area of all the buildings: http://localhost/totalarea <br />
+    * Caculate total area, average height, and building count: http://localhost/totalarea <br />
+    * Aggregate and count building ID's by year: http://localhost/totalarea <br />
     
     
