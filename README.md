@@ -20,6 +20,6 @@ API Documentation:
     * Get list of buildings by year: http://localhost/byyear?year= <br />
       - Example: http://localhost/byyear?year=1992 <br />
     * Caculate total area, average height, and building count: http://localhost/totalarea <br />
-    * Aggregate and count building ID's by year: http://localhost/totalarea <br />
+    * Aggregate and count building ID's by year: http://localhost/groupyear <br />
     
     
