@@ -1,4 +1,4 @@
-# Backend Engineering Assignment
+# Golang Buildings API
 By Wahhaj Zahedi
 
 Instructions to run:
